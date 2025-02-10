@@ -4,7 +4,12 @@ import requests
 import random
 from datetime import datetime
 import os
+import logging
 from dotenv import load_dotenv
+import pytz
+
+# Configuración de logging
+logging.basicConfig(level=logging.INFO)
 
 # Cargar variables de entorno
 load_dotenv()
@@ -30,71 +35,110 @@ MEMES = {
 
 @bot.event
 async def on_ready():
-    print(f'Bot conectado como {bot.user}')
+    logging.info(f'Bot conectado como {bot.user}')
+
+def obtener_resultados_carrera_por_nombre(nombre_carrera, temporada):
+    url = f"https://api.jolpica-f1.vercel.app/ergast/f1/{temporada}/{nombre_carrera}/results.json"
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+    except requests.RequestException as e:
+        logging.error(f"Error al obtener resultados de carrera: {e}")
+        return None
+
+    data = response.json()
+    races = data.get('MRData', {}).get('RaceTable', {}).get('Races', [])
+    if not races:
+        return None
+
+    for race in races:
+        if race.get('raceName', '').lower() == nombre_carrera.lower():
+            results = race.get('Results', [])
+            if not results:
+                return f"No se encontraron resultados en la carrera '{nombre_carrera}' de la temporada {temporada}."
+            mensaje = f"Resultados del {race.get('raceName')}:\n"
+            for result in results:
+                posicion = result.get('position')
+                driver = result.get('Driver', {})
+                nombre = driver.get('givenName', 'N/A')
+                apellido = driver.get('familyName', 'N/A')
+                mensaje += f"{posicion}. {nombre} {apellido}\n"
+            return mensaje
+    return None
 
 @bot.command(name='resultados')
 async def resultados(ctx, carrera: str):
-    # Implementar la lógica para obtener los resultados de la carrera específica
-    # Por ejemplo, podemos simular la obtención de los resultados
-    resultados_carrera = obtener_resultados_carrera(carrera, "1")  # Assuming "1" as a default value for numero_carrera
-    await ctx.send(resultados_carrera)
+    resultados_carrera = obtener_resultados_carrera_por_nombre(carrera, "1")
+    if resultados_carrera:
+        await ctx.send(resultados_carrera)
+    else:
+        await ctx.send("No se encontraron resultados para la carrera especificada.")
 
 @bot.command(name='carrera')
 async def carrera(ctx, nombre_carrera: str, temporada: str):
-    """Muestra los resultados de una carrera específica por nombre y temporada"""
     resultados = obtener_resultados_carrera_por_nombre(nombre_carrera, temporada)
     if resultados:
         await ctx.send(f"Resultados del {nombre_carrera} de la temporada {temporada}:\n{resultados}")
     else:
         await ctx.send(f"No se encontraron resultados para el {nombre_carrera} de la temporada {temporada}.")
 
-def obtener_resultados_carrera_por_nombre(nombre_carrera, temporada):
-    # Conectar con la API de Ergast para obtener los resultados de la carrera por nombre y temporada
-    url = f"http://ergast.com/api/f1/{temporada}/circuits/{nombre_carrera}/results.json"
-    response = requests.get(url)
-    if response.status_code == 200:
-        data = response.json()
-        resultados = []
-        for result in data['MRData']['RaceTable']['Races'][0]['Results']:
-            piloto = result['Driver']['familyName']
-            posicion = result['position']
-            resultados.append(f"{posicion}. {piloto}")
-        return "\n".join(resultados)
-    else:
-        return None
-
 @bot.command(name='clasificacion')
 async def clasificacion(ctx):
     try:
-        response = requests.get('http://ergast.com/api/f1/current/driverStandings.json')
+        response = requests.get('https://api.jolpica-f1.vercel.app/ergast/f1/current/driverStandings.json', timeout=10)
+        response.raise_for_status()
         data = response.json()
         standings = data['MRData']['StandingsTable']['StandingsLists'][0]['DriverStandings']
-        
-        mensaje = "🏎️ **Clasificación actual de pilotos:**\n\n"
-        for driver in standings[:10]:  # Top 10
-            mensaje += f"{driver['position']}. {driver['Driver']['givenName']} {driver['Driver']['familyName']} - {driver['points']} pts\n"
-        
-        await ctx.send(mensaje)
+
+        embed = discord.Embed(title="🏎️ Clasificación actual de pilotos", color=discord.Color.blue())
+        for driver in standings[:10]:
+            embed.add_field(name=f"{driver['position']}. {driver['Driver']['givenName']} {driver['Driver']['familyName']}",
+                            value=f"{driver['points']} pts", inline=False)
+
+        await ctx.send(embed=embed)
     except Exception as e:
+        logging.error(f"Error al obtener la clasificación: {e}")
         await ctx.send("❌ Error al obtener la clasificación")
 
 @bot.command(name='proxima')
 async def proxima_carrera(ctx):
     try:
-        response = requests.get('http://ergast.com/api/f1/current/next.json')
+        response = requests.get('https://api.jolpi.ca/ergast/f1/2025/races', timeout=10)
+        response.raise_for_status()
         data = response.json()
-        race = data['MRData']['RaceTable']['Races'][0]
+        races = data['MRData']['RaceTable']['Races']
+        if not races:
+            await ctx.send("❌ No se encontró información de carreras")
+            return
+
+        now = datetime.utcnow()
+        upcoming = []
+        for race in races:
+            race_date = race.get('date')
+            race_time = race.get('time', "00:00:00Z")
+            race_datetime = datetime.strptime(f"{race_date} {race_time}", "%Y-%m-%d %H:%M:%SZ")
+            if race_datetime > now:
+                upcoming.append((race_datetime, race))
         
-        fecha = datetime.strptime(f"{race['date']} {race['time']}", "%Y-%m-%d %H:%M:%SZ")
-        fecha_esp = fecha.replace(tzinfo=pytz.UTC).astimezone(pytz.timezone('Europe/Madrid'))
-        
-        mensaje = f"📅 **Próxima carrera:**\n\n"
-        mensaje += f"GP de {race['raceName']}\n"
-        mensaje += f"Circuito: {race['Circuit']['circuitName']}\n"
-        mensaje += f"Fecha: {fecha_esp.strftime('%d/%m/%Y %H:%M')} (hora española)\n"
-        
-        await ctx.send(mensaje)
+        if not upcoming:
+            await ctx.send("❌ No se encontró información de la próxima carrera")
+            return
+
+        # Seleccionar la carrera más próxima
+        next_race = min(upcoming, key=lambda x: x[0])[1]
+        race_date = next_race.get('date')
+        race_time = next_race.get('time', "00:00:00Z")
+        race_datetime = datetime.strptime(f"{race_date} {race_time}", "%Y-%m-%d %H:%M:%SZ")
+        race_datetime_madrid = race_datetime.replace(tzinfo=pytz.UTC).astimezone(pytz.timezone('Europe/Madrid'))
+
+        embed = discord.Embed(title="📅 Próxima carrera", color=discord.Color.green())
+        embed.add_field(name="GP", value=next_race['raceName'], inline=False)
+        embed.add_field(name="Circuito", value=next_race['Circuit']['circuitName'], inline=False)
+        embed.add_field(name="Fecha", value=race_datetime_madrid.strftime('%d/%m/%Y %H:%M') + " (hora española)", inline=False)
+
+        await ctx.send(embed=embed)
     except Exception as e:
+        logging.error(f"Error al obtener información de la próxima carrera: {e}")
         await ctx.send("❌ Error al obtener información de la próxima carrera")
 
 @bot.command(name='meme')
@@ -109,66 +153,65 @@ async def meme(ctx, tipo: str):
 @bot.command(name='circuito')
 async def circuito(ctx, nombre: str):
     try:
-        response = requests.get(f'http://ergast.com/api/f1/circuits/{nombre}.json')
+        response = requests.get(f'https://api.jolpica-f1.vercel.app/ergast/f1/circuits/{nombre}.json', timeout=10)
+        response.raise_for_status()
         data = response.json()
         circuit = data['MRData']['CircuitTable']['Circuits'][0]
-        
-        mensaje = f"🏁 **Información del circuito:**\n\n"
-        mensaje += f"Nombre: {circuit['circuitName']}\n"
-        mensaje += f"Localización: {circuit['Location']['locality']}, {circuit['Location']['country']}\n"
-        mensaje += f"Coordenadas: {circuit['Location']['lat']}, {circuit['Location']['long']}\n"
-        
-        await ctx.send(mensaje)
+
+        embed = discord.Embed(title="🏁 Información del circuito", color=discord.Color.gold())
+        embed.add_field(name="Nombre", value=circuit['circuitName'], inline=False)
+        embed.add_field(name="Localización", value=f"{circuit['Location']['locality']}, {circuit['Location']['country']}", inline=False)
+        embed.add_field(name="Coordenadas", value=f"{circuit['Location']['lat']}, {circuit['Location']['long']}", inline=False)
+
+        await ctx.send(embed=embed)
     except Exception as e:
+        logging.error(f"Error al obtener información del circuito: {e}")
         await ctx.send("❌ Error al obtener información del circuito")
 
 @bot.command(name='ayuda')
 async def help_command(ctx):
-    """Muestra todos los comandos disponibles"""
     embed = discord.Embed(
         title="📖 Comandos Disponibles",
         description="Lista de todos los comandos que puedes usar",
         color=discord.Color.blue()
     )
-    
-    # Añadir los comandos al embed
-    embed.add_field(
-        name="!ayuda", 
-        value="Muestra este mensaje de ayuda", 
-        inline=False
-    )
-    embed.add_field(
-        name="!meme [piloto]", 
-        value="Muestra un meme aleatorio (o de un piloto específico)", 
-        inline=False
-    )
-    embed.add_field(
-        name="!carrera [temporada] [numero_carrera]", 
-        value="Muestra los resultados de una carrera específica por temporada y número de carrera", 
-        inline=False
-    )
-    # Puedes añadir más comandos aquí según vayas implementándolos
-    
+
+    embed.add_field(name="!ayuda", value="Muestra este mensaje de ayuda", inline=False)
+    embed.add_field(name="!meme [piloto]", value="Muestra un meme aleatorio (o de un piloto específico)", inline=False)
+    embed.add_field(name="!carrera [temporada] [numero_carrera]", value="Muestra los resultados de una carrera específica por temporada y número de carrera", inline=False)
+    embed.add_field(name="!clasificacion", value="Muestra la clasificación actual de pilotos", inline=False)
+    embed.add_field(name="!proxima", value="Muestra información de la próxima carrera", inline=False)
+    embed.add_field(name="!circuito [nombre]", value="Muestra información de un circuito específico", inline=False)
+    embed.add_field(name="!indice_carreras", value="Muestra un índice de carreras disponibles", inline=False)
+
     embed.set_footer(text="Usa ! antes de cada comando")
-    
+
     await ctx.send(embed=embed)
 
-@bot.command(name='ayuda_bot')
-async def ayuda_bot(ctx):
-    # Implementar la lógica para el comando de ayuda
-    embed = discord.Embed(title="Comandos del Bot", description="Lista de comandos disponibles:")
-    embed.add_field(name="!resultados <carrera>", value="Obtiene los resultados de una carrera específica.", inline=False)
-    # Puedes añadir más comandos aquí según vayas implementándolos
-    embed.set_footer(text="Usa ! antes de cada comando")
-    await ctx.send(embed=embed)
+@bot.command(name='indice_carreras')
+async def indice_carreras(ctx):
+    try:
+        response = requests.get('https://api.jolpica-f1.vercel.app/ergast/f1/current.json', timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        races = data['MRData']['RaceTable']['Races']
+
+        mensaje = "📅 **Índice de Carreras de la Temporada Actual:**\n\n"
+        for race in races:
+            mensaje += f"{race['round']}. {race['raceName']} - {race['Circuit']['circuitName']}\n"
+
+        await ctx.send(mensaje)
+    except Exception as e:
+        logging.error(f"Error al obtener el índice de carreras: {e}")
+        await ctx.send("❌ Error al obtener el índice de carreras")
 
 def main():
     try:
         bot.run(token)
     except discord.errors.LoginFailure:
-        print("Error: Token inválido. Por favor verifica el token en el archivo .env")
+        logging.error("Error: Token inválido. Por favor verifica el token en el archivo .env")
     except Exception as e:
-        print(f"Error inesperado: {e}")
+        logging.error(f"Error inesperado: {e}")
 
 if __name__ == "__main__":
     main()
