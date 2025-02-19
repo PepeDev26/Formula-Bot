@@ -38,7 +38,7 @@ async def on_ready():
     logging.info(f'Bot conectado como {bot.user}')
 
 def obtener_resultados_carrera_por_nombre(nombre_carrera, temporada):
-    url = f"https://api.jolpica-f1.vercel.app/ergast/f1/{temporada}/{nombre_carrera}/results.json"
+    url = f"https://api.jolpi.ca/ergast/f1/{temporada}/{nombre_carrera}/"
     try:
         response = requests.get(url, timeout=10)
         response.raise_for_status()
@@ -64,6 +64,40 @@ def obtener_resultados_carrera_por_nombre(nombre_carrera, temporada):
                 apellido = driver.get('familyName', 'N/A')
                 mensaje += f"{posicion}. {nombre} {apellido}\n"
             return mensaje
+    return None
+
+def obtener_id_circuito(nombre_gp, año):
+    url = f'https://api.jolpi.ca/ergast/f1/{año}/circuits'
+    try:
+        respuesta = requests.get(url, timeout=10)
+        respuesta.raise_for_status()
+        datos = respuesta.json()
+        circuitos = datos.get('MRData', {}).get('CircuitTable', {}).get('Circuits', [])
+        for circuito in circuitos:
+            circuit_name = circuito.get('circuitName', '')
+            if nombre_gp.lower() in circuit_name.lower():
+                logging.info(f"Circuito encontrado: {circuit_name} (ID: {circuito.get('circuitId')})")
+                return circuito.get('circuitId')
+        logging.info("No se encontró ningún circuito que coincida con el nombre proporcionado.")
+    except Exception as e:
+        logging.error(f"Error al obtener ID del circuito: {e}")
+    return None
+
+def obtener_resultados(circuito_id, año):
+    url = f'https://api.jolpi.ca/ergast/f1/{año}/circuits/{circuito_id}/results'
+    try:
+        respuesta = requests.get(url, timeout=10)
+        respuesta.raise_for_status()
+        datos = respuesta.json()
+        races = datos.get('MRData', {}).get('RaceTable', {}).get('Races', [])
+        if races:
+            logging.info("Resultados encontrados para el circuito.")
+            # Se verifica que exista la clave Results en la primera carrera
+            return races[0].get('Results', [])
+        else:
+            logging.info("No se encontraron carreras en los datos del circuito.")
+    except Exception as e:
+        logging.error(f"Error al obtener resultados del circuito: {e}")
     return None
 
 @bot.command(name='resultados')
@@ -204,6 +238,34 @@ async def indice_carreras(ctx):
     except Exception as e:
         logging.error(f"Error al obtener el índice de carreras: {e}")
         await ctx.send("❌ Error al obtener el índice de carreras")
+
+@bot.command(name='resultados_circuito')
+async def resultados_circuito(ctx, nombre_gp: str, año: str):
+    circuito_id = obtener_id_circuito(nombre_gp, año)
+    if not circuito_id:
+        await ctx.send(f"No se encontró el Gran Premio '{nombre_gp}' en el año {año}.")
+        return
+
+    resultados = obtener_resultados(circuito_id, año)
+    if not resultados:
+        await ctx.send(f"No se encontraron resultados para el Gran Premio '{nombre_gp}' en el año {año}.")
+        return
+
+    mensaje = f"Resultados del Gran Premio '{nombre_gp}' en {año}:\n\n"
+    for resultado in resultados:
+        posicion = resultado.get('position', 'N/A')
+        driver = resultado.get('Driver', {})
+        piloto = f"{driver.get('givenName', 'N/A')} {driver.get('familyName', 'N/A')}"
+        nacionalidad = driver.get('nationality', 'N/A')
+        equipo = resultado.get('Constructor', {}).get('name', 'N/A')
+        tiempo = resultado.get('Time', {}).get('time', 'N/A')
+        mensaje += (f"Posición: {posicion}\n"
+                    f"Piloto: {piloto}\n"
+                    f"Nacionalidad: {nacionalidad}\n"
+                    f"Equipo: {equipo}\n"
+                    f"Tiempo: {tiempo}\n\n")
+    
+    await ctx.send(mensaje)
 
 def main():
     try:
