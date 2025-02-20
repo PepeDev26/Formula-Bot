@@ -89,6 +89,31 @@ def obtener_bandera(nacionalidad):
     }
     return banderas.get(nacionalidad, '')
 
+# Consultar calendario de una temporada
+@bot.command(name='calendario')
+async def calendario_temporada(ctx, año: str):
+    url = f'https://api.jolpi.ca/ergast/f1/{año}/races'
+    respuesta = requests.get(url)
+    if respuesta.status_code == 200:
+        datos = respuesta.json()
+        carreras = datos['MRData']['RaceTable']['Races']
+        if not carreras:
+            await ctx.send(f"No se encontró información de carreras para la temporada {año}.")
+            return
+
+        embed = discord.Embed(title=f"Calendario de la temporada {año}", color=discord.Color.blue())
+        for carrera in carreras:
+            nombre_gp = carrera['raceName']
+            fecha = carrera['date']
+            circuito = carrera['Circuit']['circuitName']
+            embed.add_field(name=nombre_gp, value=f"Circuito: {circuito}\nFecha: {fecha}", inline=False)
+        
+        await ctx.send(embed=embed)
+    else:
+        await ctx.send(f"Error al obtener el calendario para la temporada {año}.")
+
+
+
 # Comando para obtener resultados de un Gran Premio
 @bot.command(name='resultados')
 async def resultados_circuito(ctx, nombre_gp: str, año: str):
@@ -158,7 +183,25 @@ async def proxima_carrera(ctx):
         logging.error(f"Error al obtener información de la próxima carrera: {e}")
         await ctx.send("❌ Error al obtener información de la próxima carrera")
 
-# Evento cuando el bot esté listo
+
+# Comando para obtener información de un piloto
+@bot.command(name='piloto')
+async def info_piloto(ctx, nombre_piloto: str):
+    url = f'https://api.jolpi.ca/ergast/f1/drivers/{nombre_piloto}'
+    respuesta = requests.get(url)
+    if respuesta.status_code == 200:
+        datos = respuesta.json()
+        piloto = datos['MRData']['DriverTable']['Drivers'][0]
+        nombre = f"{piloto['givenName']} {piloto['familyName']}"
+        fecha_nacimiento = piloto['dateOfBirth']
+        nacionalidad = piloto
+
+        embed = discord.Embed(title=f"Información de {nombre}", color=discord.Color.gold())
+        embed.add_field(name="Nombre", value=nombre, inline=False)
+        embed.add_field(name="Fecha de nacimiento", value=fecha_nacimiento, inline=False)
+        embed.add_field(name="Nacionalidad", value=nacionalidad, inline=False)
+
+# Evento de terminal cuando el bot esté listo
 @bot.event
 async def on_ready():
     logging.info(f'Bot conectado como {bot.user}')
