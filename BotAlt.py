@@ -8,7 +8,7 @@ import logging
 from dotenv import load_dotenv
 import pytz
 
-#A
+
 # Configuración de logging
 logging.basicConfig(level=logging.INFO)
 
