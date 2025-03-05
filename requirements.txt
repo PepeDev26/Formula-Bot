@@ -1,0 +1,12 @@
+# Bibliotecas principales
+discord.py>=2.0.0
+requests>=2.28.0
+python-dotenv>=0.20.0
+pytz>=2022.1
+
+# Dependencias adicionales
+aiohttp>=3.8.1
+python-dateutil>=2.8.2
+
+# Bibliotecas de utilidad
+logging>=0.5.1
